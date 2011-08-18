@@ -2594,7 +2594,9 @@ ram_addr_t qemu_ram_alloc_from_ptr(ram_addr_t size, void *host,
     } else {
         QTAILQ_INSERT_TAIL(&ram_list.blocks, new_block, next);
     }
+
     ram_list.mru_block = NULL;
+    ram_list.version++;
 
     ram_list.phys_dirty = g_realloc(ram_list.phys_dirty,
                                        last_ram_offset() >> TARGET_PAGE_BITS);
@@ -2624,6 +2626,7 @@ void qemu_ram_free_from_ptr(ram_addr_t addr)
         if (addr == block->offset) {
             QTAILQ_REMOVE(&ram_list.blocks, block, next);
             ram_list.mru_block = NULL;
+            ram_list.version++;
             g_free(block);
             return;
         }
@@ -2638,6 +2641,7 @@ void qemu_ram_free(ram_addr_t addr)
         if (addr == block->offset) {
             QTAILQ_REMOVE(&ram_list.blocks, block, next);
             ram_list.mru_block = NULL;
+            ram_list.version++;
             if (block->flags & RAM_PREALLOC_MASK) {
                 ;
             } else if (mem_path) {
