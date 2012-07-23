@@ -20,6 +20,7 @@
 #include "sysemu.h"
 #include "block.h"
 #include "qemu_socket.h"
+#include "qemu-thread.h"
 #include "block-migration.h"
 #include "qmp-commands.h"
 
@@ -339,6 +340,16 @@ void migrate_fd_put_ready(MigrationState *s)
         DPRINTF("put_ready returning because of non-active state\n");
         return;
     }
+    if (s->first_time) {
+        s->first_time = false;
+        DPRINTF("beginning savevm\n");
+        ret = qemu_savevm_state_begin(s->file, &s->params);
+        if (ret < 0) {
+            DPRINTF("failed, %d\n", ret);
+            migrate_fd_error(s);
+            return;
+        }
+    }
 
     DPRINTF("iterate\n");
     ret = qemu_savevm_state_iterate(s->file);
@@ -445,19 +456,9 @@ bool migration_has_failed(MigrationState *s)
 
 void migrate_fd_connect(MigrationState *s)
 {
-    int ret;
-
     s->state = MIG_STATE_ACTIVE;
+    s->first_time = true;
     qemu_fopen_ops_buffered(s);
-
-    DPRINTF("beginning savevm\n");
-    ret = qemu_savevm_state_begin(s->file, &s->params);
-    if (ret < 0) {
-        DPRINTF("failed, %d\n", ret);
-        migrate_fd_error(s);
-        return;
-    }
-    migrate_fd_put_ready(s);
 }
 
 static MigrationState *migrate_init(const MigrationParams *params)
