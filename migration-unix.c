@@ -17,7 +17,7 @@
 #include "qemu_socket.h"
 #include "migration.h"
 #include "qemu-char.h"
-#include "buffered_file.h"
+#include "qemu-file.h"
 #include "block.h"
 
 //#define DEBUG_MIGRATION_UNIX
