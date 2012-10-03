@@ -20,7 +20,6 @@
 #include "qemu-char.h"
 #include "qemu-file.h"
 #include "block.h"
-#include "qemu_socket.h"
 
 //#define DEBUG_MIGRATION_FD
 
