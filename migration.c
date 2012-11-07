@@ -299,8 +299,8 @@ static void migrate_fd_completed(MigrationState *s)
     notifier_list_notify(&migration_state_notifiers, s);
 }
 
-ssize_t migrate_fd_put_buffer(MigrationState *s, const void *data,
-                              size_t size)
+static ssize_t migrate_fd_put_buffer(MigrationState *s, const void *data,
+                                     size_t size)
 {
     ssize_t ret;
 
@@ -318,7 +318,7 @@ ssize_t migrate_fd_put_buffer(MigrationState *s, const void *data,
     return ret;
 }
 
-bool migrate_fd_put_ready(MigrationState *s, uint64_t max_size)
+static bool migrate_fd_put_ready(MigrationState *s, uint64_t max_size)
 {
     int ret;
     uint64_t pending_size;
