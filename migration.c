@@ -637,29 +637,23 @@ static const QEMUFileOps buffered_file_ops = {
     .set_rate_limit = buffered_set_rate_limit,
 };
 
-static void qemu_fopen_ops_buffered(MigrationState *migration_state)
-{
-    QEMUFileBuffered *s;
-
-    s = g_malloc0(sizeof(*s));
-
-    s->migration_state = migration_state;
-    s->xfer_limit = migration_state->bandwidth_limit / 10;
-    s->migration_state->complete = false;
-
-    s->file = qemu_fopen_ops(s, &buffered_file_ops);
-
-    migration_state->file = s->file;
-
-    qemu_thread_create(&s->thread, buffered_file_thread, s,
-                       QEMU_THREAD_DETACHED);
-}
-
 void migrate_fd_connect(MigrationState *s)
 {
+    QEMUFileBuffered *f;
+
     s->state = MIG_STATE_ACTIVE;
     s->first_time = true;
-    qemu_fopen_ops_buffered(s);
+    s->complete = false;
+
+    f = g_malloc0(sizeof(*f));
+    f->migration_state = s;
+    f->xfer_limit = s->bandwidth_limit / 10;
+
+    f->file = qemu_fopen_ops(f, &buffered_file_ops);
+    s->file = f->file;
+
+    qemu_thread_create(&f->thread, buffered_file_thread, f,
+                       QEMU_THREAD_DETACHED);
 }
 
 static MigrationState *migrate_init(const MigrationParams *params)
