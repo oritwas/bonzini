@@ -287,7 +287,7 @@ static void migrate_fd_cleanup(void *opaque)
         s->file = NULL;
     }
 
-    assert(s->fd == -1);
+    assert(s->migration_file == NULL);
     assert(s->state != MIG_STATE_ACTIVE);
     notifier_list_notify(&migration_state_notifiers, s);
 }
@@ -332,8 +332,9 @@ static void migrate_fd_cancel(MigrationState *s)
 int migrate_fd_close(MigrationState *s)
 {
     int rc = 0;
-    if (s->fd != -1) {
-        rc = s->close(s);
+    if (s->migration_file != NULL) {
+        rc = qemu_fclose(s->migration_file);
+        s->migration_file = NULL;
         s->fd = -1;
     }
     return rc;
@@ -653,6 +654,7 @@ void qmp_migrate(const char *uri, bool has_blk, bool blk,
     }
 
     notifier_list_notify(&migration_state_notifiers, s);
+    s->fd = qemu_get_fd(s->migration_file);
 }
 
 void qmp_migrate_cancel(Error **errp)
