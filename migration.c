@@ -46,6 +46,11 @@ enum {
 
 #define MAX_THROTTLE  (32 << 20)      /* Migration speed throttling */
 
+/* Amount of time to allocate to each "chunk" of bandwidth-throttled
+ * data. */
+#define BUFFER_DELAY     100
+#define XFER_LIMIT_RATIO (1000 / BUFFER_DELAY)
+
 /* Migration XBZRLE default cache size */
 #define DEFAULT_MIGRATE_CACHE_SIZE (64 * 1024 * 1024)
 
@@ -567,7 +572,7 @@ static int64_t buffered_set_rate_limit(void *opaque, int64_t new_rate)
         new_rate = SIZE_MAX;
     }
 
-    s->xfer_limit = new_rate / 10;
+    s->xfer_limit = new_rate / XFER_LIMIT_RATIO;
     
 out:
     return s->xfer_limit;
@@ -579,9 +584,6 @@ static int64_t buffered_get_rate_limit(void *opaque)
   
     return s->xfer_limit;
 }
-
-/* 100ms  xfer_limit is the limit that we should write each 100ms */
-#define BUFFER_DELAY 100
 
 static void *buffered_file_thread(void *opaque)
 {
@@ -647,7 +649,7 @@ void migrate_fd_connect(MigrationState *s)
 
     f = g_malloc0(sizeof(*f));
     f->migration_state = s;
-    f->xfer_limit = s->bandwidth_limit / 10;
+    f->xfer_limit = s->bandwidth_limit / XFER_LIMIT_RATIO;
 
     f->file = qemu_fopen_ops(f, &buffered_file_ops);
     s->file = f->file;
