@@ -176,6 +176,12 @@ struct QEMUFile {
     int last_error;
 };
 
+typedef struct QEMUFileBuffered {
+    QEMUFile *actual_file;
+    QEMUFile *file;
+    bool close;
+} QEMUFileBuffered;
+
 typedef struct QEMUFileStdio
 {
     FILE *stdio_file;
@@ -187,6 +193,72 @@ typedef struct QEMUFileSocket
     int fd;
     QEMUFile *file;
 } QEMUFileSocket;
+
+static int buffer_close(void *opaque)
+{
+    QEMUFileBuffered *s = opaque;
+
+    if (s->close) {
+        return qemu_fclose(s->actual_file);
+    }
+    return 0;
+}
+
+static int buffer_flush(void *opaque)
+{
+    QEMUFileBuffered *s = opaque;
+    QEMUFile *f = s->file;
+
+    if (f->buf_index > 0) {
+        qemu_put_buffer(s->actual_file, f->buf, f->buf_index);
+        f->buf_index = 0;
+    }
+    return qemu_file_get_error(s->actual_file);
+}
+
+static int buffer_put_buffer(void *opaque, const uint8_t *buf, int64_t pos, int size)
+{
+    QEMUFileBuffered *s = opaque;
+    QEMUFile *f = s->file;
+    int l;
+
+    while (size > 0) {
+        l = IO_BUF_SIZE - f->buf_index;
+        if (l > size)
+            l = size;
+        memcpy(f->buf + f->buf_index, buf, l);
+        f->buf_index += l;
+        pos += l;
+        size -= l;
+        if (f->buf_index >= IO_BUF_SIZE) {
+            qemu_fflush(s->file);
+        }
+    }
+    return qemu_file_get_error(s->actual_file);
+}
+
+static const QEMUFileOps buffered_ops = {
+    .put_buffer = buffer_put_buffer,
+    .flush =      buffer_flush,
+    .close =      buffer_close,
+};
+
+static QEMUFile *qemu_fopen_buffer(QEMUFile *f, bool close)
+{
+    QEMUFileBuffered *s;
+
+    if (f->ops == &buffered_ops && close) {
+        return f;
+    }
+
+    s = g_malloc0(sizeof(QEMUFileBuffered));
+    s->actual_file = f;
+    s->close = close;
+
+    f = qemu_fopen_ops(s, &buffered_ops);
+    s->file = f;
+    return f;
+}
 
 static int socket_get_fd(void *opaque)
 {
@@ -486,8 +558,10 @@ static const QEMUFileOps bdrv_write_ops = {
 
 static QEMUFile *qemu_fopen_bdrv(BlockDriverState *bs, int is_writable)
 {
-    if (is_writable)
-        return qemu_fopen_ops(bs, &bdrv_write_ops);
+    if (is_writable) {
+        QEMUFile *f = qemu_fopen_ops(bs, &bdrv_write_ops);
+        return qemu_fopen_buffer(f, true);
+    }
     return qemu_fopen_ops(bs, &bdrv_read_ops);
 }
 
@@ -525,17 +599,6 @@ void qemu_fflush(QEMUFile *f)
 
     if (f->last_error) {
         return;
-    }
-
-    if (f->ops->put_buffer && f->is_write && f->buf_index > 0) {
-        ret = f->ops->put_buffer(f->opaque, f->buf, f->pos, f->buf_index);
-        if (ret >= 0) {
-            f->pos += f->buf_index;
-        }
-        f->buf_index = 0;
-    }
-    if (ret < 0) {
-        qemu_file_set_error(f, ret);
     }
 
     if (f->ops->flush) {
@@ -615,53 +678,23 @@ int qemu_fclose(QEMUFile *f)
 
 void qemu_put_buffer(QEMUFile *f, const uint8_t *buf, int size)
 {
-    int l;
-
+    int ret;
     if (f->last_error) {
         return;
     }
-
-    if (f->is_write == 0 && f->buf_index > 0) {
-        fprintf(stderr,
-                "Attempted to write to buffer while read buffer is not empty\n");
-        abort();
-    }
-
-    while (size > 0) {
-        l = IO_BUF_SIZE - f->buf_index;
-        if (l > size)
-            l = size;
-        memcpy(f->buf + f->buf_index, buf, l);
-        f->is_write = 1;
-        f->buf_index += l;
-        buf += l;
-        size -= l;
-        if (f->buf_index >= IO_BUF_SIZE) {
-            qemu_fflush(f);
-            if (qemu_file_get_error(f)) {
-                break;
-            }
-        }
+    f->is_write = 1;
+    ret = f->ops->put_buffer(f->opaque, buf, f->pos, size);
+    if (ret >= 0) {
+        f->pos += size;
+    } else {
+        qemu_file_set_error(f, ret);
     }
 }
 
 void qemu_put_byte(QEMUFile *f, int v)
 {
-    if (f->last_error) {
-        return;
-    }
-
-    if (f->is_write == 0 && f->buf_index > 0) {
-        fprintf(stderr,
-                "Attempted to write to buffer while read buffer is not empty\n");
-        abort();
-    }
-
-    f->buf[f->buf_index++] = v;
-    f->is_write = 1;
-    if (f->buf_index >= IO_BUF_SIZE) {
-        qemu_fflush(f);
-    }
+    uint8_t c = v;
+    qemu_put_buffer(f, &c, 1);
 }
 
 static void qemu_file_skip(QEMUFile *f, int size)
@@ -1780,6 +1813,7 @@ int qemu_savevm_state_complete(QEMUFile *f)
         }
     }
 
+    f = qemu_fopen_buffer(f, false);
     QTAILQ_FOREACH(se, &savevm_handlers, entry) {
         int len;
 
@@ -1805,7 +1839,9 @@ int qemu_savevm_state_complete(QEMUFile *f)
 
     qemu_put_byte(f, QEMU_VM_EOF);
     qemu_fflush(f);
-    return qemu_file_get_error(f);
+    ret = qemu_file_get_error(f);
+    qemu_fclose(f);
+    return ret;
 }
 
 uint64_t qemu_savevm_state_pending(QEMUFile *f, uint64_t max_size)
