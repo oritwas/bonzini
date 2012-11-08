@@ -275,8 +275,12 @@ ssize_t qemu_write_full(int fd, const void *buf, size_t count)
     while (count) {
         ret = write(fd, buf, count);
         if (ret < 0) {
-            if (errno == EINTR)
+            if (errno == EINTR) {
                 continue;
+            }
+            if (total == 0) {
+                total = ret;
+            }
             break;
         }
 
