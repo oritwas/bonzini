@@ -444,11 +444,6 @@ static int buffered_close(void *opaque)
     MigrationState *s = opaque;
 
     DPRINTF("closing\n");
-
-    s->xfer_limit = INT_MAX;
-    while (!qemu_file_get_error(s->file) && s->buffer_size) {
-        buffered_flush(s);
-    }
     return migrate_fd_close(s);
 }
 
@@ -509,6 +504,8 @@ static void *buffered_file_thread(void *opaque)
     MigrationState *s = opaque;
     int64_t initial_time = qemu_get_clock_ms(rt_clock);
     int64_t max_size = 0;
+    int64_t start_time = initial_time;
+    bool old_vm_running = false;
     bool first_time = true;
     bool last_round = false;
     uint64_t pending_size;
@@ -516,22 +513,25 @@ static void *buffered_file_thread(void *opaque)
     while (s->state == MIG_STATE_ACTIVE) {
         int64_t current_time = qemu_get_clock_ms(rt_clock);
 
-        if (current_time >= initial_time + BUFFER_DELAY) {
-            uint64_t transferred_bytes = s->bytes_xfer;
-            uint64_t time_spent = current_time - initial_time;
-            double bandwidth = transferred_bytes / time_spent;
-            max_size = bandwidth * migrate_max_downtime() / 1000000;
+        if (last_round || current_time >= initial_time + BUFFER_DELAY) {
+            if (current_time >= initial_time + BUFFER_DELAY) {
+                uint64_t transferred_bytes = s->bytes_xfer;
+                uint64_t time_spent = current_time - initial_time;
+                double bandwidth = transferred_bytes / time_spent;
+                max_size = bandwidth * migrate_max_downtime() / 1000000;
+                initial_time = current_time;
+            }
 
             DPRINTF("transferred %" PRIu64 " time_spent %" PRIu64
                     " bandwidth %g max_size %" PRId64 "\n",
                     transferred_bytes, time_spent, bandwidth, max_size);
 
             s->bytes_xfer = 0;
-            initial_time = current_time;
         }
-        if (!last_round && (s->bytes_xfer >= s->xfer_limit)) {
+        if (s->bytes_xfer >= s->xfer_limit) {
             /* usleep expects microseconds */
             g_usleep((initial_time + BUFFER_DELAY - current_time)*1000);
+            continue;
         }
         buffered_flush(s);
         if (qemu_file_get_error(s->file)) {
@@ -540,9 +540,10 @@ static void *buffered_file_thread(void *opaque)
             qemu_mutex_unlock_iothread();
             continue;
         }
-
-        DPRINTF("file is ready\n");
-        if (s->state != MIG_STATE_ACTIVE || s->bytes_xfer >= s->xfer_limit) {
+        if (last_round) {
+            if (s->buffer_size == 0) {
+                migrate_fd_completed(s);
+            }
             continue;
         }
 
@@ -560,31 +561,30 @@ static void *buffered_file_thread(void *opaque)
         if (pending_size >= max_size) {
             qemu_savevm_state_iterate(s->file);
         } else {
-            int old_vm_running = runstate_is_running();
-            int64_t start_time, end_time;
-
             DPRINTF("done iterating\n");
-            start_time = qemu_get_clock_ms(rt_clock);
             qemu_system_wakeup_request(QEMU_WAKEUP_REASON_OTHER);
+            old_vm_running = runstate_is_running();
+            start_time = qemu_get_clock_ms(rt_clock);
             vm_stop_force_state(RUN_STATE_FINISH_MIGRATE);
-
-            if (qemu_savevm_state_complete(s->file) < 0) {
-                migrate_fd_error(s);
-            } else {
-                migrate_fd_completed(s);
-            }
-            end_time = qemu_get_clock_ms(rt_clock);
-            s->total_time = end_time - s->total_time;
-            s->downtime = end_time - start_time;
-            if (s->state != MIG_STATE_COMPLETED) {
-                if (old_vm_running) {
-                    vm_start();
-                }
-            }
+            s->xfer_limit = INT_MAX;
+            qemu_savevm_state_complete(s->file);
             last_round = true;
         }
         qemu_mutex_unlock_iothread();
     }
+
+    qemu_mutex_lock_iothread();
+    if (s->state == MIG_STATE_COMPLETED) {
+        int64_t end_time = qemu_get_clock_ms(rt_clock);
+        s->total_time = end_time - s->total_time;
+        s->downtime = end_time - start_time;
+    } else {
+        if (old_vm_running) {
+            assert(last_round);
+            vm_start();
+        }
+    }
+    qemu_mutex_unlock_iothread();
 
     g_free(s->buffer);
     return NULL;
