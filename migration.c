@@ -434,7 +434,7 @@ bool migration_has_failed(MigrationState *s)
             s->state == MIG_STATE_ERROR);
 }
 
-static ssize_t buffered_flush(MigrationState *s)
+static void buffered_flush(MigrationState *s)
 {
     size_t offset = 0;
     ssize_t ret = 0;
@@ -459,9 +459,8 @@ static ssize_t buffered_flush(MigrationState *s)
     s->buffer_size -= offset;
 
     if (ret < 0) {
-        return ret;
+        qemu_file_set_error(s->file, ret);
     }
-    return offset;
 }
 
 static int buffered_put_buffer(void *opaque, const uint8_t *buf, int64_t pos, int size)
@@ -499,25 +498,15 @@ static int buffered_put_buffer(void *opaque, const uint8_t *buf, int64_t pos, in
 static int buffered_close(void *opaque)
 {
     MigrationState *s = opaque;
-    ssize_t ret = 0;
-    int ret2;
 
     DPRINTF("closing\n");
 
     s->xfer_limit = INT_MAX;
     while (!qemu_file_get_error(s->file) && s->buffer_size) {
-        ret = buffered_flush(s);
-        if (ret < 0) {
-            break;
-        }
-    }
-
-    ret2 = migrate_fd_close(s);
-    if (ret >= 0) {
-        ret = ret2;
+        buffered_flush(s);
     }
     s->complete = true;
-    return ret;
+    return migrate_fd_close(s);
 }
 
 /*
