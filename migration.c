@@ -434,19 +434,7 @@ bool migration_has_failed(MigrationState *s)
             s->state == MIG_STATE_ERROR);
 }
 
-typedef struct QEMUFileBuffered
-{
-    MigrationState *migration_state;
-    QEMUFile *file;
-    size_t bytes_xfer;
-    size_t xfer_limit;
-    uint8_t *buffer;
-    size_t buffer_size;
-    size_t buffer_capacity;
-    QemuThread thread;
-} QEMUFileBuffered;
-
-static ssize_t buffered_flush(QEMUFileBuffered *s)
+static ssize_t buffered_flush(MigrationState *s)
 {
     size_t offset = 0;
     ssize_t ret = 0;
@@ -455,8 +443,7 @@ static ssize_t buffered_flush(QEMUFileBuffered *s)
 
     while (s->bytes_xfer < s->xfer_limit && offset < s->buffer_size) {
 
-        ret = migrate_fd_put_buffer(s->migration_state, s->buffer + offset,
-                                    s->buffer_size - offset);
+        ret = migrate_fd_put_buffer(s, s->buffer + offset, s->buffer_size - offset);
         if (ret <= 0) {
             DPRINTF("error flushing data, %zd\n", ret);
             break;
@@ -479,7 +466,7 @@ static ssize_t buffered_flush(QEMUFileBuffered *s)
 
 static int buffered_put_buffer(void *opaque, const uint8_t *buf, int64_t pos, int size)
 {
-    QEMUFileBuffered *s = opaque;
+    MigrationState *s = opaque;
     ssize_t error;
 
     DPRINTF("putting %d bytes at %" PRId64 "\n", size, pos);
@@ -511,7 +498,7 @@ static int buffered_put_buffer(void *opaque, const uint8_t *buf, int64_t pos, in
 
 static int buffered_close(void *opaque)
 {
-    QEMUFileBuffered *s = opaque;
+    MigrationState *s = opaque;
     ssize_t ret = 0;
     int ret2;
 
@@ -525,11 +512,11 @@ static int buffered_close(void *opaque)
         }
     }
 
-    ret2 = migrate_fd_close(s->migration_state);
+    ret2 = migrate_fd_close(s);
     if (ret >= 0) {
         ret = ret2;
     }
-    s->migration_state->complete = true;
+    s->complete = true;
     return ret;
 }
 
@@ -541,14 +528,14 @@ static int buffered_close(void *opaque)
  */
 static int buffered_get_fd(void *opaque)
 {
-    QEMUFileBuffered *s = opaque;
+    MigrationState *s = opaque;
 
-    return s->migration_state->fd;
+    return s->fd;
 }
 
 static int buffered_rate_limit(void *opaque)
 {
-    QEMUFileBuffered *s = opaque;
+    MigrationState *s = opaque;
     int ret;
 
     ret = qemu_file_get_error(s->file);
@@ -564,7 +551,7 @@ static int buffered_rate_limit(void *opaque)
 
 static int64_t buffered_set_rate_limit(void *opaque, int64_t new_rate)
 {
-    QEMUFileBuffered *s = opaque;
+    MigrationState *s = opaque;
     if (qemu_file_get_error(s->file)) {
         goto out;
     }
@@ -580,14 +567,14 @@ out:
 
 static int64_t buffered_get_rate_limit(void *opaque)
 {
-    QEMUFileBuffered *s = opaque;
+    MigrationState *s = opaque;
   
     return s->xfer_limit;
 }
 
 static void *buffered_file_thread(void *opaque)
 {
-    QEMUFileBuffered *s = opaque;
+    MigrationState *s = opaque;
     int64_t initial_time = qemu_get_clock_ms(rt_clock);
     int64_t max_size = 0;
     bool last_round = false;
@@ -595,7 +582,7 @@ static void *buffered_file_thread(void *opaque)
     while (true) {
         int64_t current_time = qemu_get_clock_ms(rt_clock);
 
-        if (s->migration_state->complete) {
+        if (s->complete) {
             break;
         }
         if (current_time >= initial_time + BUFFER_DELAY) {
@@ -620,12 +607,11 @@ static void *buffered_file_thread(void *opaque)
         DPRINTF("file is ready\n");
         if (s->bytes_xfer < s->xfer_limit) {
             DPRINTF("notifying client\n");
-            last_round = migrate_fd_put_ready(s->migration_state, max_size);
+            last_round = migrate_fd_put_ready(s, max_size);
         }
     }
 
     g_free(s->buffer);
-    g_free(s);
     return NULL;
 }
 
@@ -641,21 +627,20 @@ static const QEMUFileOps buffered_file_ops = {
 
 void migrate_fd_connect(MigrationState *s)
 {
-    QEMUFileBuffered *f;
-
     s->state = MIG_STATE_ACTIVE;
     s->first_time = true;
     s->complete = false;
 
-    f = g_malloc0(sizeof(*f));
-    f->migration_state = s;
-    f->xfer_limit = s->bandwidth_limit / XFER_LIMIT_RATIO;
+    s->bytes_xfer = 0;
+    s->buffer = NULL;
+    s->buffer_size = 0;
+    s->buffer_capacity = 0;
+    s->xfer_limit = s->bandwidth_limit / XFER_LIMIT_RATIO;
 
-    f->file = qemu_fopen_ops(f, &buffered_file_ops);
-    s->file = f->file;
+    s->file = qemu_fopen_ops(s, &buffered_file_ops);
 
-    qemu_thread_create(&f->thread, buffered_file_thread, f,
-                       QEMU_THREAD_DETACHED);
+    qemu_thread_create(&s->thread, buffered_file_thread,
+                       s, QEMU_THREAD_DETACHED);
 }
 
 static MigrationState *migrate_init(const MigrationParams *params)

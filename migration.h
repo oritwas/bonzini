@@ -20,6 +20,7 @@
 #include "error.h"
 #include "vmstate.h"
 #include "qapi-types.h"
+#include "qemu-thread.h"
 
 struct MigrationParams {
     bool blk;
@@ -31,6 +32,13 @@ typedef struct MigrationState MigrationState;
 struct MigrationState
 {
     int64_t bandwidth_limit;
+    size_t bytes_xfer;
+    size_t xfer_limit;
+    uint8_t *buffer;
+    size_t buffer_size;
+    size_t buffer_capacity;
+    QemuThread thread;
+
     QEMUFile *file;
     int fd;
     int state;
