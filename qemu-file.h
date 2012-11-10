@@ -112,6 +112,7 @@ int qemu_file_rate_limit(QEMUFile *f);
 int64_t qemu_file_set_rate_limit(QEMUFile *f, int64_t new_rate);
 int64_t qemu_file_get_rate_limit(QEMUFile *f);
 int qemu_file_get_error(QEMUFile *f);
+void qemu_file_set_error(QEMUFile *f, int ret);
 
 static inline void qemu_put_be64s(QEMUFile *f, const uint64_t *pv)
 {
