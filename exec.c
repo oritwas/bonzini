@@ -647,6 +647,7 @@ bool tcg_enabled(void)
 void cpu_exec_init_all(void)
 {
 #if !defined(CONFIG_USER_ONLY)
+    qemu_mutex_init(&ram_list.mutex);
     memory_map_init();
     io_mem_init();
 #endif
@@ -2341,6 +2342,16 @@ void qemu_flush_coalesced_mmio_buffer(void)
         kvm_flush_coalesced_mmio_buffer();
 }
 
+void qemu_mutex_lock_ramlist(void)
+{
+    qemu_mutex_lock(&ram_list.mutex);
+}
+
+void qemu_mutex_unlock_ramlist(void)
+{
+    qemu_mutex_unlock(&ram_list.mutex);
+}
+
 #if defined(__linux__) && !defined(TARGET_S390X)
 
 #include <sys/vfs.h>
@@ -2522,6 +2533,8 @@ void qemu_ram_set_idstr(ram_addr_t addr, const char *name, DeviceState *dev)
     }
     pstrcat(new_block->idstr, sizeof(new_block->idstr), name);
 
+    /* This assumes the iothread lock is taken here too.  */
+    qemu_mutex_lock_ramlist();
     QTAILQ_FOREACH(block, &ram_list.blocks, next) {
         if (block != new_block && !strcmp(block->idstr, new_block->idstr)) {
             fprintf(stderr, "RAMBlock \"%s\" already registered, abort!\n",
@@ -2529,6 +2542,7 @@ void qemu_ram_set_idstr(ram_addr_t addr, const char *name, DeviceState *dev)
             abort();
         }
     }
+    qemu_mutex_unlock_ramlist();
 }
 
 static int memory_try_enable_merging(void *addr, size_t len)
@@ -2552,6 +2566,8 @@ ram_addr_t qemu_ram_alloc_from_ptr(ram_addr_t size, void *host,
     size = TARGET_PAGE_ALIGN(size);
     new_block = g_malloc0(sizeof(*new_block));
 
+    /* This assumes the iothread lock is taken here too.  */
+    qemu_mutex_lock_ramlist();
     new_block->mr = mr;
     new_block->offset = find_ram_offset(size);
     if (host) {
@@ -2597,6 +2613,7 @@ ram_addr_t qemu_ram_alloc_from_ptr(ram_addr_t size, void *host,
 
     ram_list.mru_block = NULL;
     ram_list.version++;
+    qemu_mutex_unlock_ramlist();
 
     ram_list.phys_dirty = g_realloc(ram_list.phys_dirty,
                                        last_ram_offset() >> TARGET_PAGE_BITS);
@@ -2622,21 +2639,26 @@ void qemu_ram_free_from_ptr(ram_addr_t addr)
 {
     RAMBlock *block;
 
+    /* This assumes the iothread lock is taken here too.  */
+    qemu_mutex_lock_ramlist();
     QTAILQ_FOREACH(block, &ram_list.blocks, next) {
         if (addr == block->offset) {
             QTAILQ_REMOVE(&ram_list.blocks, block, next);
             ram_list.mru_block = NULL;
             ram_list.version++;
             g_free(block);
-            return;
+            break;
         }
     }
+    qemu_mutex_unlock_ramlist();
 }
 
 void qemu_ram_free(ram_addr_t addr)
 {
     RAMBlock *block;
 
+    /* This assumes the iothread lock is taken here too.  */
+    qemu_mutex_lock_ramlist();
     QTAILQ_FOREACH(block, &ram_list.blocks, next) {
         if (addr == block->offset) {
             QTAILQ_REMOVE(&ram_list.blocks, block, next);
@@ -2667,9 +2689,10 @@ void qemu_ram_free(ram_addr_t addr)
 #endif
             }
             g_free(block);
-            return;
+            break;
         }
     }
+    qemu_mutex_unlock_ramlist();
 
 }
 
@@ -2747,6 +2770,7 @@ void *qemu_get_ram_ptr(ram_addr_t addr)
 {
     RAMBlock *block;
 
+    /* The list is protected by the iothread lock here.  */
     block = ram_list.mru_block;
     if (block && addr - block->offset < block->length) {
         goto found;
@@ -2786,6 +2810,7 @@ static void *qemu_safe_ram_ptr(ram_addr_t addr)
 {
     RAMBlock *block;
 
+    /* The list is protected by the iothread lock here.  */
     QTAILQ_FOREACH(block, &ram_list.blocks, next) {
         if (addr - block->offset < block->length) {
             if (xen_enabled()) {
