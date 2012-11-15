@@ -167,6 +167,9 @@ struct QEMUFile {
     void *opaque;
     int is_write;
 
+    int64_t bytes_xfer;
+    int64_t xfer_limit;
+
     int64_t pos; /* start of buffer when writing, end of buffer
                     when reading */
     int buf_index;
@@ -574,7 +577,6 @@ QEMUFile *qemu_fopen_ops(void *opaque, const QEMUFileOps *ops)
     f->opaque = opaque;
     f->ops = ops;
     f->is_write = 0;
-
     return f;
 }
 
@@ -686,6 +688,7 @@ void qemu_put_buffer(QEMUFile *f, const uint8_t *buf, int size)
     ret = f->ops->put_buffer(f->opaque, buf, f->pos, size);
     if (ret >= 0) {
         f->pos += size;
+        f->bytes_xfer += size;
     } else {
         qemu_file_set_error(f, ret);
     }
@@ -787,28 +790,28 @@ int64_t qemu_ftell(QEMUFile *f)
 
 int qemu_file_rate_limit(QEMUFile *f)
 {
-    if (f->ops->rate_limit)
-        return f->ops->rate_limit(f->opaque);
-
+    if (qemu_file_get_error(f)) {
+        return 1;
+    }
+    if (f->xfer_limit > 0 && f->bytes_xfer > f->xfer_limit) {
+        return 1;
+    }
     return 0;
 }
 
 int64_t qemu_file_get_rate_limit(QEMUFile *f)
 {
-    if (f->ops->get_rate_limit)
-        return f->ops->get_rate_limit(f->opaque);
-
-    return 0;
+    return f->xfer_limit;
 }
 
-int64_t qemu_file_set_rate_limit(QEMUFile *f, int64_t new_rate)
+void qemu_file_set_rate_limit(QEMUFile *f, int64_t limit)
 {
-    /* any failed or completed migration keeps its state to allow probing of
-     * migration data, but has no associated file anymore */
-    if (f && f->ops->set_rate_limit)
-        return f->ops->set_rate_limit(f->opaque, new_rate);
+    f->xfer_limit = limit;
+}
 
-    return 0;
+void qemu_file_reset_rate_limit(QEMUFile *f)
+{
+    f->bytes_xfer = 0;
 }
 
 void qemu_put_be16(QEMUFile *f, unsigned int v)
