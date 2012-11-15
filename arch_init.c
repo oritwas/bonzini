@@ -429,7 +429,7 @@ static int ram_save_block(QEMUFile *f, bool last_stage)
     if (!block)
         block = QTAILQ_FIRST(&ram_list.blocks);
 
-    while (true) {
+    while (last_stage ? true : !qemu_file_rate_limit(f)) {
         mr = block->mr;
         offset = migration_bitmap_find_and_reset_dirty(mr, offset);
         if (complete_round && block == last_block &&
