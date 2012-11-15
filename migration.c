@@ -414,11 +414,8 @@ static int64_t migration_set_rate_limit(void *opaque, int64_t new_rate)
     if (qemu_file_get_error(s->file)) {
         goto out;
     }
-    if (new_rate > SIZE_MAX) {
-        new_rate = SIZE_MAX;
-    }
 
-    s->xfer_limit = new_rate / XFER_LIMIT_RATIO;
+    s->xfer_limit = new_rate;
     
 out:
     return s->xfer_limit;
@@ -488,7 +485,7 @@ static void *migration_thread(void *opaque)
             old_vm_running = runstate_is_running();
             start_time = qemu_get_clock_ms(rt_clock);
             vm_stop_force_state(RUN_STATE_FINISH_MIGRATE);
-            s->xfer_limit = INT_MAX;
+            qemu_file_set_rate_limit(s->file, INT_MAX);
             if (qemu_savevm_state_complete(s->file) < 0) {
                 migrate_fd_error(s);
             } else {
@@ -530,10 +527,11 @@ void migrate_fd_connect(MigrationState *s)
     s->state = MIG_STATE_ACTIVE;
 
     s->bytes_xfer = 0;
-    s->xfer_limit = s->bandwidth_limit / XFER_LIMIT_RATIO;
-
     s->cleanup_bh = qemu_bh_new(migrate_fd_cleanup, s);
     s->file = qemu_fopen_ops(s, &migration_file_ops);
+
+    qemu_file_set_rate_limit(s->file,
+                             s->bandwidth_limit / XFER_LIMIT_RATIO);
 
     qemu_thread_create(&s->thread, migration_thread,
                        s, QEMU_THREAD_JOINABLE);
@@ -658,10 +656,16 @@ void qmp_migrate_set_speed(int64_t value, Error **errp)
     if (value < 0) {
         value = 0;
     }
+    if (value > SIZE_MAX) {
+        value = SIZE_MAX;
+    }
 
     s = migrate_get_current();
     s->bandwidth_limit = value;
-    qemu_file_set_rate_limit(s->file, s->bandwidth_limit);
+    if (s->file) {
+        qemu_file_set_rate_limit(s->file,
+                                 s->bandwidth_limit / XFER_LIMIT_RATIO);
+    }
 }
 
 void qmp_migrate_set_downtime(double value, Error **errp)
