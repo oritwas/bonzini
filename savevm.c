@@ -1751,7 +1751,7 @@ int qemu_savevm_state_complete(QEMUFile *f)
     }
 
     qemu_put_byte(f, QEMU_VM_EOF);
-
+    qemu_fflush(f);
     return qemu_file_get_error(f);
 }
 
