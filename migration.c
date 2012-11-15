@@ -380,8 +380,9 @@ static void buffered_flush(MigrationState *s)
 
     DPRINTF("flushing %zu byte(s) of data\n", s->buffer_size);
 
-    while (s->bytes_xfer < s->xfer_limit && offset < s->buffer_size) {
+    qemu_fflush(s->file);
 
+    while (s->bytes_xfer < s->xfer_limit && offset < s->buffer_size) {
         ret = migrate_fd_put_buffer(s, s->buffer + offset, s->buffer_size - offset);
         if (ret <= 0) {
             DPRINTF("error flushing data, %zd\n", ret);
