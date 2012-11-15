@@ -283,9 +283,6 @@ static void migrate_fd_cleanup(void *opaque)
 
     if (s->file) {
         DPRINTF("closing file\n");
-        qemu_fclose(s->file);
-        s->file = NULL;
-
         qemu_mutex_unlock_iothread();
         qemu_thread_join(&s->thread);
         qemu_mutex_lock_iothread();
@@ -293,7 +290,7 @@ static void migrate_fd_cleanup(void *opaque)
         migrate_fd_close(s);
     }
 
-    assert(s->migration_file == NULL);
+    assert(s->file == NULL);
     assert(s->state != MIG_STATE_ACTIVE);
     notifier_list_notify(&migration_state_notifiers, s);
 }
@@ -319,9 +316,9 @@ static void migrate_fd_cancel(MigrationState *s)
 int migrate_fd_close(MigrationState *s)
 {
     int rc = 0;
-    if (s->migration_file != NULL) {
-        rc = qemu_fclose(s->migration_file);
-        s->migration_file = NULL;
+    if (s->file != NULL) {
+        rc = qemu_fclose(s->file);
+        s->file = NULL;
     }
     return rc;
 }
@@ -350,38 +347,6 @@ bool migration_has_failed(MigrationState *s)
 {
     return (s->state == MIG_STATE_CANCELLED ||
             s->state == MIG_STATE_ERROR);
-}
-
-static int migration_put_buffer(void *opaque, const uint8_t *buf, int64_t pos, int size)
-{
-    MigrationState *s = opaque;
-
-    DPRINTF("putting %d bytes at %" PRId64 "\n", size, pos);
-
-    if (size <= 0) {
-        return size;
-    }
-
-    qemu_put_buffer(s->migration_file, buf, size);
-    return qemu_file_get_error(s->migration_file);
-}
-
-static int migration_close(void *opaque)
-{
-    return 0;
-}
-
-/*
- * The meaning of the return values is:
- *   0: We can continue sending
- *   1: Time to stop
- *   negative: There has been an error
- */
-static int migration_get_fd(void *opaque)
-{
-    MigrationState *s = opaque;
-
-    return qemu_get_fd(s->migration_file);
 }
 
 static void *migration_thread(void *opaque)
@@ -469,19 +434,11 @@ static void *migration_thread(void *opaque)
 }
 
 
-static const QEMUFileOps migration_file_ops = {
-    .get_fd =         migration_get_fd,
-    .put_buffer =     migration_put_buffer,
-    .close =          migration_close,
-};
-
 void migrate_fd_connect(MigrationState *s)
 {
     s->state = MIG_STATE_ACTIVE;
 
     s->cleanup_bh = qemu_bh_new(migrate_fd_cleanup, s);
-    s->file = qemu_fopen_ops(s, &migration_file_ops);
-
     qemu_file_set_rate_limit(s->file,
                              s->bandwidth_limit / XFER_LIMIT_RATIO);
 
