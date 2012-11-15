@@ -167,8 +167,8 @@ struct QEMUFile {
     void *opaque;
     int is_write;
 
-    int64_t buf_offset; /* start of buffer when writing, end of buffer
-                           when reading */
+    int64_t pos; /* start of buffer when writing, end of buffer
+                    when reading */
     int buf_index;
     int buf_size; /* 0 when writing */
     uint8_t buf[IO_BUF_SIZE];
@@ -527,9 +527,9 @@ void qemu_fflush(QEMUFile *f)
         return;
     }
     if (f->is_write && f->buf_index > 0) {
-        ret = f->ops->put_buffer(f->opaque, f->buf, f->buf_offset, f->buf_index);
+        ret = f->ops->put_buffer(f->opaque, f->buf, f->pos, f->buf_index);
         if (ret >= 0) {
-            f->buf_offset += f->buf_index;
+            f->pos += f->buf_index;
         }
         f->buf_index = 0;
     }
@@ -556,11 +556,11 @@ static void qemu_fill_buffer(QEMUFile *f)
     f->buf_index = 0;
     f->buf_size = pending;
 
-    len = f->ops->get_buffer(f->opaque, f->buf + pending, f->buf_offset,
+    len = f->ops->get_buffer(f->opaque, f->buf + pending, f->pos,
                         IO_BUF_SIZE - pending);
     if (len > 0) {
         f->buf_size += len;
-        f->buf_offset += len;
+        f->pos += len;
     } else if (len == 0) {
         qemu_file_set_error(f, -EIO);
     } else if (len != -EAGAIN)
@@ -738,9 +738,10 @@ int qemu_get_byte(QEMUFile *f)
     return result;
 }
 
-static int64_t qemu_ftell(QEMUFile *f)
+int64_t qemu_ftell(QEMUFile *f)
 {
-    return f->buf_offset - f->buf_size + f->buf_index;
+    qemu_fflush(f);
+    return f->pos;
 }
 
 int qemu_file_rate_limit(QEMUFile *f)
