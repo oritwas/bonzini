@@ -710,6 +710,21 @@ void qemu_put_buffer(QEMUFile *f, const uint8_t *buf, int size)
     }
 }
 
+void qemu_write_iovec(QEMUFile *f, struct iovec *iov, unsigned int iovcnt)
+{
+    int ret;
+    if (f->last_error) {
+        return;
+    }
+    f->is_write = 1;
+    ret = f->ops->write_iovec(f->opaque, iov, iovcnt, 0);
+    if (ret >= 0) {
+        f->bytes_xfer += ret;
+    } else {
+        qemu_file_set_error(f, ret);
+    }
+}
+
 void qemu_put_byte(QEMUFile *f, int v)
 {
     uint8_t c = v;

@@ -82,6 +82,7 @@ void qemu_fflush(QEMUFile *f);
 void qemu_put_buffer(QEMUFile *f, const uint8_t *buf, int size);
 void qemu_put_byte(QEMUFile *f, int v);
 int64_t qemu_ftell(QEMUFile *f);
+void qemu_write_iovec(QEMUFile *f, struct iovec *iov, unsigned int iovcnt);
 
 static inline void qemu_put_ubyte(QEMUFile *f, unsigned int v)
 {
