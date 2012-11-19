@@ -24,6 +24,13 @@
 #ifndef QEMU_FILE_H
 #define QEMU_FILE_H 1
 
+/* This function writes an iovec to a file at the given postion.
+ * The pos argument can be ignored if the file is only being used for
+ * streaming.  The handler should try to write all of the data it can.
+ */
+typedef int (QEMUFileWriteIoVecFunc)(void *opaque, struct iovec *iov,
+                                     unsigned int iovcnt, int pos);
+
 /* This function writes a chunk of data to a file at the given position.
  * The pos argument can be ignored if the file is only being used for
  * streaming.  The handler should try to write all of the data it can.
@@ -56,6 +63,7 @@ typedef int (QEMUFileCloseFunc)(void *opaque);
 typedef int (QEMUFileGetFD)(void *opaque);
 
 typedef struct QEMUFileOps {
+    QEMUFileWriteIoVecFunc *write_iovec;
     QEMUFilePutBufferFunc *put_buffer;
     QEMUFileGetBufferFunc *get_buffer;
     QEMUFileFlushFunc *flush;
