@@ -87,6 +87,7 @@
 #include "qmp-commands.h"
 #include "trace.h"
 #include "bitops.h"
+#include "iov.h"
 
 #define SELF_ANNOUNCE_ROUNDS 5
 
@@ -306,6 +307,20 @@ static int socket_put_buffer(void *opaque, const uint8_t *buf, int64_t pos, int 
     return len;
 }
 
+static int socket_write_iovec(void *opaque, struct iovec *iov, unsigned iov_cnt,
+                              int pos)
+{
+    QEMUFileSocket *s = opaque;
+    ssize_t len;
+    
+    len = iov_send_no_sendmsg(s->fd, iov, iov_cnt, pos, iov_size(iov, iov_cnt));
+    if (len == -1) {
+        len = -socket_error();
+    }
+    
+    return len;
+}
+
 static int socket_close(void *opaque)
 {
     QEMUFileSocket *s = opaque;
@@ -481,7 +496,8 @@ static const QEMUFileOps socket_read_ops = {
 static const QEMUFileOps socket_write_ops = {
     .get_fd =     socket_get_fd,
     .put_buffer = socket_put_buffer,
-    .close =      socket_close
+    .close =      socket_close,
+    .write_iovec = socket_write_iovec
 };
 
 QEMUFile *qemu_fopen_socket(int fd, const char *mode)
