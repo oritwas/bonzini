@@ -279,6 +279,46 @@ static void save_block_hdr(QEMUFile *f, RAMBlock *block, ram_addr_t offset,
 
 }
 
+static uint64 offset_line;
+static uint8 idstr_len;
+static uint8 page_len;
+
+static struct iovec *create_page_iovec(RAMBlock *block,
+                                       ram_addr_t offset,
+                                       int cont, int flag,
+                                       uint8 *page, size_t len,
+                                       unsigned int *iovcnt)
+{
+    struct iovec *iov;
+    *iovcnt = 3;
+    /* include idstr */
+    if (!cont) {
+        *iovcnt += 2;
+    }
+
+    iov = malloc(sizeof(struct iovec*)*(*iovcnt));
+    qemu_put_mem_be64((uint32*)&offset_line, offset | cont | flag);
+    iov[0].iov_base = &offset_line;
+    iov[0].iov_len = sizeof(uint64);
+    if (!cont) {
+        idstr_len = strlen(block->idstr);
+        iov[1].iov_base = &idstr_len;
+        iov[1].iov_len = 1;
+        iov[2].iov_base = (uint8_t *)block->idstr;
+        iov[2].iov_len =  idstr_len;
+    }
+
+    page_len = len;
+    iov[*iovcnt - 2].iov_base = &page_len;
+    iov[*iovcnt - 2].iov_len = 1;
+    iov[*iovcnt - 1].iov_base = page;
+    iov[*iovcnt - 1].iov_len = page_len;
+
+    DPRINTF("created iovec len %d for offset %lx\n",*iovcnt,offset);
+    return iov;
+}
+
+
 #define ENCODING_FLAG_XBZRLE 0x1
 
 static int save_xbzrle_page(QEMUFile *f, uint8_t *current_data,
@@ -467,8 +507,12 @@ static int ram_save_block(QEMUFile *f, bool last_stage)
 
             /* either we didn't send yet (we may have had XBZRLE overflow) */
             if (bytes_sent == -1) {
-                save_block_hdr(f, block, offset, cont, RAM_SAVE_FLAG_PAGE);
-                qemu_put_buffer(f, p, TARGET_PAGE_SIZE);
+                unsigned int iovcnt;
+                struct iovec *iov = create_page_iovec(block, offset, cont,
+                                                      RAM_SAVE_FLAG_PAGE,
+                                                      p, TARGET_PAGE_SIZE,
+                                                      &iovcnt);
+                qemu_write_iovec(f, iov, iovcnt);
                 bytes_sent = TARGET_PAGE_SIZE;
                 acct_info.norm_pages++;
             }

@@ -312,10 +312,11 @@ static int socket_write_iovec(void *opaque, struct iovec *iov, unsigned iov_cnt,
 {
     QEMUFileSocket *s = opaque;
     ssize_t len;
-    
     len = iov_send_no_sendmsg(s->fd, iov, iov_cnt, pos, iov_size(iov, iov_cnt));
+    printf("sending iov len %ld\n",len);
     if (len == -1) {
         len = -socket_error();
+        printf("error %s\n",strerror(-len));
     }
     
     return len;
@@ -863,6 +864,20 @@ void qemu_put_be64(QEMUFile *f, uint64_t v)
 {
     qemu_put_be32(f, v >> 32);
     qemu_put_be32(f, v);
+}
+
+void qemu_put_mem_be32(uint8 *f, unsigned int v)
+{
+    f[0] = v >> 24;
+    f[1] = v >> 16;
+    f[2] = v >> 8;
+    f[3] = v;
+}
+
+void qemu_put_mem_be64(uint32 *f, uint64_t v)
+{
+    f[0] = v >> 32;
+    f[1] = v;
 }
 
 unsigned int qemu_get_be16(QEMUFile *f)
@@ -1931,6 +1946,7 @@ static int qemu_savevm_state(QEMUFile *f)
             goto out;
     } while (ret == 0);
 
+    printf("complete\n");
     ret = qemu_savevm_state_complete(f);
 
 out:
