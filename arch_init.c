@@ -50,6 +50,8 @@
 #include "trace.h"
 #include "cpu-all.h"
 
+#define DEBUG_ARCH_INIT 1
+
 #ifdef DEBUG_ARCH_INIT
 #define DPRINTF(fmt, ...) \
     do { fprintf(stdout, "arch_init: " fmt, ## __VA_ARGS__); } while (0)
@@ -578,6 +580,9 @@ static int ram_save_setup(QEMUFile *f, void *opaque)
 
     qemu_mutex_unlock_ramlist();
     qemu_put_be64(f, RAM_SAVE_FLAG_EOS);
+
+    /* flush */
+    qemu_fflush(f);
 
     return 0;
 }

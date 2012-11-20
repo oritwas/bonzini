@@ -26,7 +26,7 @@
 #include "qemu-timer.h"
 #include "qemu-char.h"
 
-//#define DEBUG_MIGRATION
+#define DEBUG_MIGRATION
 
 #ifdef DEBUG_MIGRATION
 #define DPRINTF(fmt, ...) \
