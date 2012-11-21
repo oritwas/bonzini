@@ -89,6 +89,14 @@
 #include "bitops.h"
 #include "iov.h"
 
+typedef struct AllocatedBuffer {
+    uint8_t *buffer;
+    QTAILQ_ENTRY(AllocatedBuffer) next;
+} AllocatedBuffer;
+
+static QTAILQ_HEAD(, AllocatedBuffer) allocated_buffers =
+    QTAILQ_HEAD_INITIALIZER(allocated_buffers);
+
 #define SELF_ANNOUNCE_ROUNDS 5
 
 #ifndef ETH_P_RARP
@@ -162,6 +170,7 @@ void qemu_announce_self(void)
 /* savevm/loadvm support */
 
 #define IO_BUF_SIZE 32768
+#define MAX_IOV_SIZE 64
 
 struct QEMUFile {
     const QEMUFileOps *ops;
@@ -177,6 +186,9 @@ struct QEMUFile {
     int buf_size; /* 0 when writing */
     uint8_t buf[IO_BUF_SIZE];
 
+    struct iovec iov[MAX_IOV_SIZE];
+    unsigned int iov_cnt;
+
     int last_error;
 };
 
@@ -191,14 +203,6 @@ typedef struct QEMUFileStdio
     FILE *stdio_file;
     QEMUFile *file;
 } QEMUFileStdio;
-
-typedef struct AllocatedBuffer {
-    uint8_t *buffer;
-    QTAILQ_ENTRY(AllocatedBuffer) next;
-} AllocatedBuffer;
-
-static QTAILQ_HEAD(, AllocatedBuffer) allocated_buffers =
-    QTAILQ_HEAD_INITIALIZER(allocated_buffers);
 
 typedef struct QEMUFileSocket
 {
@@ -307,22 +311,26 @@ static int socket_put_buffer(void *opaque, const uint8_t *buf, int64_t pos,
                              int size)
 {
     QEMUFileSocket *s = opaque;
+    QEMUFile *f = s->file;
     ssize_t len;
 
-    /* create iov */
-    struct iovec iov[1];
-    unsigned int iov_cnt = 1;
+    if (f->iov_cnt == MAX_IOV_SIZE) {
+        return -1;
+    }
 
     AllocatedBuffer *allocated_buffer = g_malloc(sizeof(*allocated_buffer));
     allocated_buffer->buffer  = g_memdup(buf, size);
     QTAILQ_INSERT_TAIL(&allocated_buffers, allocated_buffer, next);
 
-    iov[0].iov_base = allocated_buffer->buffer;
-    iov[0].iov_len = size;
+    f->iov[f->iov_cnt].iov_base = (uint8_t *)buf;
+    f->iov[f->iov_cnt++].iov_len = size;
 
-    len = iov_send_no_sendmsg(s->fd, iov, iov_cnt, 0, size);
+    len = iov_send_no_sendmsg(s->fd, f->iov, f->iov_cnt, 0, size);
+
     if (len == -1) {
         len = -socket_error();
+    } else {
+        f->iov_cnt = 0;
     }
 
     QTAILQ_REMOVE(&allocated_buffers, allocated_buffer, next);
