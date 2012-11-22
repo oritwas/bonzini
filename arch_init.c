@@ -656,6 +656,8 @@ static int ram_save_complete(QEMUFile *f, void *opaque)
     qemu_mutex_unlock_ramlist();
     qemu_put_be64(f, RAM_SAVE_FLAG_EOS);
 
+    qemu_fflush(f);
+
     g_free(migration_bitmap);
     migration_bitmap = NULL;
 
