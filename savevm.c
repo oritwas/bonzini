@@ -307,6 +307,22 @@ static int socket_get_buffer(void *opaque, uint8_t *buf, int64_t pos, int size)
     return len;
 }
 
+static int socket_flush(void *opaque)
+{
+    QEMUFileSocket *s = opaque;
+    QEMUFile *f = s->file;
+    ssize_t len;
+
+    len = iov_send_no_sendmsg(s->fd, f->iov, f->iov_cnt, 0,
+                              iov_size(f->iov, f->iov_cnt));
+    if (len == -1) {
+        len = -socket_error();
+    } else {
+        f->iov_cnt = 0;
+    }
+    return len;
+}
+
 static int socket_put_buffer_no_copy(void *opaque, const uint8_t *buf,
                                      int64_t pos, int size)
 {
@@ -526,6 +542,7 @@ static const QEMUFileOps socket_write_ops = {
     .get_fd =     socket_get_fd,
     .put_buffer = socket_put_buffer,
     .put_buffer_no_copy = socket_put_buffer_no_copy,
+    .flush      = socket_flush,
     .close =      socket_close
 };
 
