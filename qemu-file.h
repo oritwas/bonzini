@@ -61,6 +61,7 @@ typedef struct QEMUFileOps {
     QEMUFileFlushFunc *flush;
     QEMUFileCloseFunc *close;
     QEMUFileGetFD *get_fd;
+    QEMUFilePutBufferFunc *put_buffer_no_copy;
 } QEMUFileOps;
 
 QEMUFile *qemu_fopen_ops(void *opaque, const QEMUFileOps *ops);
@@ -72,6 +73,7 @@ int qemu_get_fd(QEMUFile *f);
 int qemu_fclose(QEMUFile *f);
 void qemu_fflush(QEMUFile *f);
 void qemu_put_buffer(QEMUFile *f, const uint8_t *buf, int size);
+void qemu_put_buffer_no_copy(QEMUFile *f, const uint8_t *buf, int size);
 void qemu_put_byte(QEMUFile *f, int v);
 int64_t qemu_ftell(QEMUFile *f);
 

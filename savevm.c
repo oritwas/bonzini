@@ -307,8 +307,8 @@ static int socket_get_buffer(void *opaque, uint8_t *buf, int64_t pos, int size)
     return len;
 }
 
-static int socket_put_buffer(void *opaque, const uint8_t *buf, int64_t pos,
-                             int size)
+static int socket_put_buffer_no_copy(void *opaque, const uint8_t *buf,
+                                     int64_t pos, int size)
 {
     QEMUFileSocket *s = opaque;
     QEMUFile *f = s->file;
@@ -317,10 +317,6 @@ static int socket_put_buffer(void *opaque, const uint8_t *buf, int64_t pos,
     if (f->iov_cnt == MAX_IOV_SIZE) {
         return -1;
     }
-
-    AllocatedBuffer *allocated_buffer = g_malloc(sizeof(*allocated_buffer));
-    allocated_buffer->buffer  = g_memdup(buf, size);
-    QTAILQ_INSERT_TAIL(&allocated_buffers, allocated_buffer, next);
 
     f->iov[f->iov_cnt].iov_base = (uint8_t *)buf;
     f->iov[f->iov_cnt++].iov_len = size;
@@ -332,6 +328,20 @@ static int socket_put_buffer(void *opaque, const uint8_t *buf, int64_t pos,
     } else {
         f->iov_cnt = 0;
     }
+    return len;
+}
+
+static int socket_put_buffer(void *opaque, const uint8_t *buf, int64_t pos,
+                             int size)
+{
+    ssize_t len;
+
+    AllocatedBuffer *allocated_buffer = g_malloc(sizeof(*allocated_buffer));
+    allocated_buffer->buffer  = g_memdup(buf, size);
+    QTAILQ_INSERT_TAIL(&allocated_buffers, allocated_buffer, next);
+
+    len = socket_put_buffer_no_copy(opaque, allocated_buffer->buffer, pos,
+                                    size);
 
     QTAILQ_REMOVE(&allocated_buffers, allocated_buffer, next);
     g_free(allocated_buffer->buffer);
@@ -515,6 +525,7 @@ static const QEMUFileOps socket_read_ops = {
 static const QEMUFileOps socket_write_ops = {
     .get_fd =     socket_get_fd,
     .put_buffer = socket_put_buffer,
+    .put_buffer_no_copy = socket_put_buffer_no_copy,
     .close =      socket_close
 };
 
@@ -713,14 +724,15 @@ int qemu_fclose(QEMUFile *f)
     return ret;
 }
 
-void qemu_put_buffer(QEMUFile *f, const uint8_t *buf, int size)
+static void qemu_put_buffer_impl(QEMUFile *f, const uint8_t *buf, int size,
+                                 QEMUFilePutBufferFunc *put_buffer)
 {
     int ret;
     if (f->last_error) {
         return;
     }
     f->is_write = 1;
-    ret = f->ops->put_buffer(f->opaque, buf, f->pos, size);
+    ret = (*put_buffer)(f->opaque, buf, f->pos, size);
     if (ret >= 0) {
         f->pos += size;
         f->bytes_xfer += size;
@@ -729,6 +741,15 @@ void qemu_put_buffer(QEMUFile *f, const uint8_t *buf, int size)
     }
 }
 
+void qemu_put_buffer_no_copy(QEMUFile *f, const uint8_t *buf, int size)
+{
+    qemu_put_buffer_impl(f, buf, size, f->ops->put_buffer_no_copy);
+}
+
+void qemu_put_buffer(QEMUFile *f, const uint8_t *buf, int size)
+{
+    qemu_put_buffer_impl(f, buf, size, f->ops->put_buffer);
+}
 
 void qemu_put_byte(QEMUFile *f, int v)
 {
